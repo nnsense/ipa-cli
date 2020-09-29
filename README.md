@@ -12,21 +12,20 @@ This script requires 3 positional arguments: **service task and target**.
 ## FIND
 
 Search all users by name, cn, uid. The returned object is listing all attributes from `user_find` plus last login and last failed authentication from ipa `user_status`.
-By default, it returns all the attributes, you can show some specific one by using `--filter` (`-f`). Attributes available are listed by searching without a filter.
-By default last login attribute is disabled, "for performance reasons".
-See [this webpage](https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/7/html/linux_domain_identity_authentication_and_policy_guide/enabling-tracking-of-last-successful-kerberos-authentication)  to enable or you'll get an empty field:
+By default, it returns all the attributes, you can limit to specific attributes by using `--filter` (`-f`). Attributes available are listed by searching without a filter. The result by using `--filter` will be a table. If `--filter` is set, the uid attribute is automatically added to the list.
+By default last login attribute is disabled, "for performance reasons". See [this webpage](https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/7/html/linux_domain_identity_authentication_and_policy_guide/enabling-tracking-of-last-successful-kerberos-authentication)  to enable it or you'll get an empty field.
 
 Examples:
 Search a user called "dbowie", list all its attributes:
 ```
 > ipa-cli user find "dbowie"
 ```
-Search a user called "dbowie" and show only some attribute. --filter (-f) accepts anty IPA aatributes, plus the custom attributes lastlogin and lastfailedauth.
+Search a user called "dbowie" and show only some attribute. `--filter` (`-f`) accepts any IPA aatributes, plus the custom attributes lastlogin and lastfailedauth.
 ```
-> ipa-cli user find "bowie" -f uid lastlogin lastfailedauth
+> ipa-cli user find "bowie" -f sn lastlogin lastfailedauth
 ```
 
-Search for a user's assigned OTP. Like with user, use --filter (-f) as in the previous example to show only attributes:
+Search for a user's assigned OTP. Like with user, use `--filter` (`-f`) as in the previous example to show only attributes:
 ```
 ipa-cli otp find "dbowie"
 ```
