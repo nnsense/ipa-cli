@@ -14,8 +14,7 @@ This script requires 3 positional arguments: **service task and target**.
 Search all users by name, cn, uid. The returned object is showing also last login and last failed authentication, provided by ipa user-status.
 By default, it returns all the attributes, you can show some specific one by using --filter (-f). Attributes available are listed by searching without a filter.
 By default last login attribute is disabled, "for performance reasons".
-See this webpage to enable or you'll get an empty field:
-https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/7/html/linux_domain_identity_authentication_and_policy_guide/enabling-tracking-of-last-successful-kerberos-authentication
+See [this webpage](https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/7/html/linux_domain_identity_authentication_and_policy_guide/enabling-tracking-of-last-successful-kerberos-authentication)  to enable or you'll get an empty field:
 
 Examples:
 Search a user called "dbowie", list all its attributes:
