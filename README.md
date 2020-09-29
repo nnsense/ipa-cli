@@ -15,7 +15,6 @@ Search all users by name, cn, uid. The returned object is listing all attributes
 By default, it returns all the attributes, you can limit to specific attributes by using `--filter` (`-f`). Attributes available are listed by searching without a filter. The result by using `--filter` will be a table. If `--filter` is set, the uid attribute is automatically added to the list.
 By default last login attribute is disabled, "for performance reasons". See [this webpage](https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/7/html/linux_domain_identity_authentication_and_policy_guide/enabling-tracking-of-last-successful-kerberos-authentication)  to enable it or you'll get an empty field.
 
-Examples:
 Search a user called "dbowie", list all its attributes:
 ```
 > ipa-cli user find "dbowie"
@@ -37,6 +36,7 @@ user - Search and DISABLE accounts of which the last successful auth is older th
 host - Search and DELETE hosts of which last successful password change is older than 90 days (TO DO).
 dns - Search and DELETE unmatched DNS entries not present as hosts on IPA. This should be run after the host clean-up
 otp - Search and DELETE any OTP not matching any user.
+
 Target can be "\*" for a cpmplete cleanup, or a specific object group, ie to delete all users create in 2019:
 ```
 > ipa-cli user find "2019" --cleanup
