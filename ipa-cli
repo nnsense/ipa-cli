@@ -1,0 +1,564 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+
+# Required:
+# pip3 install requests_gssapi
+# pip3 install requests_kerberos
+# pip3 install python_freeipa
+
+from os import path
+from pathlib import Path
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+import datetime
+import argparse
+from python_freeipa import ClientMeta
+from prettytable import PrettyTable # pip install prettytable
+import configparser
+
+parser = argparse.ArgumentParser(description='Manages _some_ IPA services. Running kinit is advised before using this tool, otherwise you can set -u and -p but your user auth needs to be password only. This is usually convenient to automate the script')
+parser.add_argument("service", help="IPA service to interact with, currently: user, dns", nargs='?')
+parser.add_argument("task", help="Action to perform, currently: create, delete, disable, find", nargs='?')
+parser.add_argument("target", help="Any field to search or username/DNS entry to create/delete/..", nargs='?')
+
+parser.add_argument("-u", help="IPA admin username - to use this script unattended")
+parser.add_argument("-p", help="IPA admin password - to use this script unattended")
+
+parser.add_argument("--filter","-f", help="Optional with --find: returns on or more selected attributes, use space as separator, ie: --filter dn title. Refer to find's output for the attributes' names", nargs='+')
+parser.add_argument("--cleanup", help="Optional with --find: delete or disable the objects returned by find. By default it deletes objects, with users you can set --disable to just disable the user", action="store_true", default=False)
+parser.add_argument("--disable", help="Optional with --cleanup: disable the objects returned by find instead of deleting it. Applies to users only.", action="store_true", default=False)
+parser.add_argument("--force", help="Optional with --cleanup: delete or disable (see --disable) the objects returned by find without confirmation", action="store_true", default=False)
+
+parser.add_argument("--name", "-n", help="User creation: User's given name")
+parser.add_argument("--sn", "-s", help="User creation: User's surname")
+parser.add_argument("--title", "-t", help="User creation: Set the title for the new user")
+parser.add_argument("--groups", "-g", help="User creation: space spearated list of one or more groups the user will belong to.", nargs='?')
+parser.add_argument("--password", help="User creation: Set a password. Default password if not set: 'ChangeMeSoon'")
+
+parser.add_argument("--usage", help="Dispaly script's help and examples", action="store_true", default=False)
+
+args = parser.parse_args()
+
+
+'''
+Configuration
+This script creates a config file with some example fields into user's home called ipa-cli.cfg if not present.
+TODO: Add more config
+'''
+
+config = configparser.ConfigParser()
+home = str(Path.home())
+
+if not path.exists(home + '/.ipa-cli.cfg'):
+    config['DEFAULT'] = {'at_domain': '@domainname.net', 'ipa_server': 'ipa.domain.net'}
+
+    with open(home + '/.ipa-cli.cfg', 'w') as configfile:
+        config.write(configfile)
+else:
+    config.read(home + '/.ipa-cli.cfg')
+
+config = config['DEFAULT']
+at_domain = config['at_domain']
+ipa_server = config['ipa_server']
+def_pass = config['def_pass']
+
+client = ClientMeta(ipa_server, verify_ssl=False)
+
+if args.u and args.p:
+    # Login without kerberos token
+    client.login(args.username, args.password)
+else:
+    # Login with kerberos token
+    client.login_kerberos()
+
+def main():
+
+    if args.usage:
+        print("""
+This script is to help with some common IPA management tasks, such as user, OTP and DNS management.
+It is strongly advised to create a kerberos ticket with `kinit username`, -u and -p are provided to pass administrative username and password
+but the sole use of this is to automate the script, with plain username/password (no OTP).
+
+This script requires 3 positional arguments: service task and target.
+service is the IPA object to work with, can currently be dns, user, otp and host.
+task, is the action to perform on the service, can currently be create, delete, disable, cleanup and find.
+target is any attribute to search for, or a specific username to create, delete or disable. For DNS is a record name.
+
+FIND
+Search all users by name, cn, uid. The returned object is showing also last login and last failed authentication, provided by ipa user-status.
+By default, it returns all the attributes, you can show some specific one by using --filter (-f). Attributes available are listed by searching without a filter.
+By default last login attribute is disabled, "for performance reasons".
+See this webpage to enable or you'll get an empty field:
+https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/7/html/linux_domain_identity_authentication_and_policy_guide/enabling-tracking-of-last-successful-kerberos-authentication
+
+Examples:
+Search a user called "dbowie", list all its attributes:
+ipa-cli user find "dbowie"
+Search a user called "dbowie" and show only some attribute. --filter (-f) accepts anty IPA aatributes, plus the custom attributes lastlogin and lastfailedauth.
+ipa-cli user find "bowie" -f uid lastlogin lastfailedauth
+Search for a user's assigned OTP. Like with user, use --filter (-f) as in the previous example to show only attributes:
+ipa-cli otp find "dbowie"
+
+--cleanup (switch available using --find)
+Clean up objects found with --find using the following rules:
+user - Search and DISABLE accounts of which the last successful auth is older than 90 days.
+host - Search and DELETE hosts of which last successful password change is older than 90 days.
+dns - Search and DELETE unmatched DNS entries not present as hosts on IPA. This should be run after the host clean-up
+otp - Search and DELETE any OTP not matching any user.
+Target can be "*" for a cpmplete cleanup, or a specific object group, ie to delete all users create in 2019:
+> ipa-cli user find "2019" --cleanup
+Being based on "find", find's output can be used first to check what cleanup will delete/disable.
+By default, --cleanup *deletes* the object, with users you may want to disable first, to do that use --disable:
+> ipa-cli user find "2019" --cleanup --disable
+
+CREATE
+Creaete a new user. --password is optional, see the config file to set this field (default: 'ChangeMeSoon')
+A group the user will be member of can be defined with --group (-g). OTP creation is mandatory, the uri of the user's OTP
+will be displayed at the end of the creation, copy and paste the provided uri into a browser to show th QR code.
+ipa-cli user create 'dbowie' -n 'David' -s 'Bowie' -g 'prod-users'
+
+DELETE
+To delete a user, the uid must be provided. Note that the OTP belonging to the user is also deleted if exists.
+ipa-cli user delete "dbowie"
+
+
+""")
+        exit()
+
+
+    if not args.task or not args.service or not args.service:
+        print("ipa-cli requires a service to work with, a task to perform and a target, ie: ipa-cli user find 'dbowie'. See --usage")
+        exit()
+
+    if args.task == "create":
+
+        '''
+        create: the argument is positional, as in "ipa-cli user create "dbowie" -n "David" -s "Bowie" -t "Artist"
+        user: It will create a user based on command line arguments
+        dns: TODO - It will create a DNS entry based on command line arguments and defaults.
+        host: Does not apply to host.
+        '''
+        
+        if args.service == "dns":
+            print("DNS management not yet implemented")
+        
+        elif args.service == "user":
+
+            if not args.target or not args.name or not args.sn:
+                print("ipa-cli user create requires a username, the user's given name and surname and, optionally, a password. ie: ipa-cli user create 'dbowie' -n 'David' -s 'Bowie'.\See --usage for more info and examples")
+                exit()
+            uid = args.target
+            name= args.name
+            sn = args.sn
+            
+            if args.password:
+                password = args.password  
+            else:
+                print("No password set, default to " + def_pass)
+                password = def_pass
+                
+            title = args.title
+            email = name + "." + sn + at_domain
+            cn = name + " " + sn
+
+            # Create user
+            try:
+                user = client.user_add( a_uid=uid.lower(), 
+                                        o_givenname=name,
+                                        o_sn=sn,
+                                        o_cn=cn,
+                                        o_mail=email.lower(),
+                                        o_userpassword=password,
+                                        o_title=title,
+                                        o_ipauserauthtype=['password', 'otp']
+                                       )
+            except Exception as e:
+                print(e)
+                exit()
+            else:
+                print("New user successfully created")
+            
+            # Create and add the OTP
+            otp_expire = datetime.datetime.now() + datetime.timedelta(30)
+            otp_expire = "{:%Y-%m-%dZ}".format(otp_expire)
+            otp_date = "{:%Y-%m-%d %H:%M:%S}".format(datetime.datetime.now())
+
+            otp = client.otptoken_add(o_ipatokenowner=uid, o_ipatokennotafter=otp_expire, o_description="Created by " + client.whoami()['arguments'][0] + " at " + otp_date)
+            
+            print('OTP:')
+            print(otp['result']['uri'])
+
+            # Add the new user to the required groups
+            if args.groups:
+                for grp in args.groups:
+                    client.group_add_member(a_cn=grp, o_user=uid)
+
+
+        
+    elif args.task == "delete":
+    
+        '''
+        delete: the argument is positional, as in "ipa-cli user delete myuser"
+        It will DELETE an user on IPA or a DNS record.
+        Since this is a disruptive action, a confirmation request to proceed is required.
+        '''
+    
+        if args.service == "dns":
+            print("DNS management not yet implemented")
+        else:
+            confirm = input(args.target + " will be deleted forever. Are you sure? Please type yes or no: ")
+
+            if confirm.lower() == "yes":
+                obj_delete(args.target, args.service)
+            else:
+                print("Aborted")
+
+
+    elif args.task == "disable":
+    
+        '''
+        disable: the argument is positional, as in "ipa-cli user disable myuser"
+        It will disable an user on IPA. DNS records cannot be disabled.
+        Since this is a non-disruptive action (user can be re-enabled), there's no confirmation request to proceed.
+        '''
+    
+        if args.service == "user":
+            user_disable(args.target)
+        else:
+            print("DNS/OTP and hosts have no disable.")
+
+
+
+    elif args.task == "find":
+
+        '''
+        find: Search a USER by name, or an OTP by id. The argument is positional, as in "ipa-cli user find myuser"
+        If cleanup is enabled, the objects will eventually be deleted/disabled
+        '''
+        
+        if args.disable:
+            print("--disable set") if args.service == "user" else print("--disable not available with OTP")
+        
+        if args.service == "dns":
+            print("DNS management not yet implemented")
+            exit()
+        
+        elif args.service == "otp":
+            otp_found = client.otptoken_find(a_criteria = (args.target).replace("*", ""))
+            found_nr = otp_found['count']
+            
+            print(str(found_nr) + " token(s) found")
+            
+            if found_nr > 0:
+                attributes_tab = []
+                otp_dicts = []
+                
+                for otp in otp_found['result']:
+                    if args.filter:
+                        if "ipatokenowner" not in args.filter:
+                            args.filter.insert(0,"ipatokenowner")
+                        attributes_tab.append(obj_values(args.filter, otp, "otp"))
+                        pt = PrettyTable(args.filter)
+                    else:
+                        otp_dicts.append(dict(zip(otp.keys(), obj_values(otp.keys(), otp, "otp"))))
+                
+                if args.filter:
+                    for row in attributes_tab:
+                        pt.add_row(row)
+                    print(pt.get_string())
+                
+                else:
+                    for otp_dict in otp_dicts:
+                        for k,v in otp_dict.items():
+                            print(k + ": " + str(v))
+                        print()
+
+                    if args.cleanup:
+                        if not args.force:
+                            confirm = input("Proceed with cleanup? Please type yes or no: ")
+
+                            if confirm.lower() == "yes":
+                                for otp_dict in otp_dicts:
+                                    obj_delete(otp_dict['ipatokenuniqueid'], args.service)
+                            else:
+                                print("Aborted")
+                        else:
+                            for otp_dict in otp_dicts:
+                                obj_delete(otp_dict['ipatokenuniqueid'], args.service)
+            
+        elif args.service == "user":
+            usr_found = client.user_find(a_criteria = (args.target).replace("*", ""))
+            found_nr = usr_found['count']
+
+            print(str(found_nr) + " user(s) found")
+            
+            if found_nr > 0:
+                attributes_tab = []
+                usr_dicts = []
+                
+                for usr in usr_found['result']:
+
+                    if args.filter:
+                        if "uid" not in args.filter:
+                            args.filter.insert(0,"uid")
+                            
+                        pt = PrettyTable(args.filter)
+                        attributes_tab.append(obj_values(args.filter, usr, "user"))
+
+                    else:
+                        # Adding all attributes from client.user_find
+                        usr_dict = dict(zip(usr.keys(), obj_values(usr.keys(), usr, "user")))
+                        # Appending additional attributes from client.user_status
+                        usr_dict['lastauth'] = get_lastsuccessfulauth(usr['uid'][0])
+                        usr_dict['lastfailedauth'] = get_lastfailedauth(usr['uid'][0])
+                        usr_dicts.append(usr_dict) 
+                        
+                if args.filter:
+                    for row in attributes_tab:
+                        pt.add_row(row)
+                        pt.align = "l"
+                    print(pt.get_string())
+                    
+                else:
+                    for usr_dict in usr_dicts:
+                        for k,v in usr_dict.items():
+                            print(k + ": " + str(v))
+                        print()
+                        
+                    if args.cleanup:
+                        if args.disable:
+                            for usr_dict in usr_dicts:
+                                usr_disable(usr_dict['uid'])
+                            
+                        else:
+                            if not args.force:
+                                confirm = input("Proceed with cleanup? Please type yes or no: ")
+
+                                if confirm.lower() == "yes":
+                                    for usr_dict in usr_dicts:
+                                        obj_delete(usr_dict['uid'], args.service)
+                                else:
+                                    print("Aborted")
+                            else:
+                                for usr_dict in usr_dicts:
+                                    obj_delete(usr_dict['uid'], args.service)
+
+        elif args.service == "host":
+            host_found = client.host_find(a_criteria = (args.target).replace("*", ""))
+            found_nr = host_found['count']
+            
+            print(str(found_nr) + " host(s) found")
+
+            if found_nr > 0:
+                attributes_tab = []
+                host_dicts = []
+
+                attr = ['dn','enrolledby_user','krblastpwdchange','krblastsuccessfulauth']
+                
+                for host in host_found['result']:
+                    # host_dicts.append(dict(zip(attr, obj_values(attr, host))))
+                    host_dicts.append(dict(zip(host.keys(), obj_values(host.keys(), host, "host"))))
+
+                for host_dict in host_dicts:
+                    for k,v in host_dict.items():
+                        print(k + ": " + str(v))
+                    print()
+
+                if args.cleanup:
+                    if not args.force:
+                        confirm = input("Proceed with cleanup? Please type yes or no: ")
+
+                        if confirm.lower() == "yes":
+                            for usr_dict in usr_dicts:
+                                attributes_tab
+                                # obj_delete(usr_dict['uid'], args.service)
+                        else:
+                            print("Aborted")
+                    else:
+                        for usr_dict in usr_dicts:
+                            attributes_tab
+                            # obj_delete(usr_dict['uid'], args.service)
+
+
+
+def get_lastfailedauth(uid):
+    '''
+    Search the given uid on IPA for the attribute krblastfailedauth. IPA's output this as a string date, ie: 20201231235959Z for 31/12/2020 23:59:59.
+    The attribute is different depending on where the user ended up login in, having 2 IPA we can have 2 values.
+    This function fetches the value from the IPA servers and return the lastest as a string in ISO format: 2020-12-31 23:59:59.
+    '''
+
+    usr_status =  client.user_status(uid)
+    
+    ipa1 = usr_status['result'][0]
+    ipa2 = usr_status['result'][1]
+
+    try:
+        ipa2_lastfail = ipa2['krblastfailedauth'][0]['__datetime__']
+        ipa2_lastfail = datetime.datetime.strptime(ipa2_lastfail, '%Y%m%d%H%M%SZ')
+        ipa1_lastfail = ipa1['krblastfailedauth'][0]['__datetime__']
+        ipa1_lastfail = datetime.datetime.strptime(ipa1_lastfail, '%Y%m%d%H%M%SZ')
+    except:
+        return "N/A"
+    else:
+        if ipa1_lastfail > ipa2_lastfail:
+            lastfail = ipa1_lastfail
+        else:
+            lastfail = ipa2_lastfail
+        
+        return "{:%Y-%m-%d %H:%M:%S}".format(lastfail)
+
+
+def get_lastsuccessfulauth(uid):
+    '''
+    Search the given uid on IPA server for the attribute krblastsuccessfulauth. IPA's
+    will return a string, such as: 20201231235959Z for 31/12/2020 23:59:59.
+    The attribute is different depending on where the user ended up login in,
+    ie: having 2 IPA we can have 2 values.
+    This function fetches the value from the IPA servers, compare and return the lastest
+    as a string in ISO format: 2020-12-31 23:59:59.
+    
+    NOTE: By default this attribute is disabled, "for performance reasons".
+    See this webpage to enable it:
+    https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/7/html/linux_domain_identity_authentication_and_policy_guide/enabling-tracking-of-last-successful-kerberos-authentication
+    '''                         
+    
+    usr_status =  client.user_status(uid)
+    lastlogin = ""
+    
+    for ipa_server in usr_status['result']:
+        try:
+            ipa_lastlogin = ipa_server['krblastsuccessfulauth'][0]['__datetime__']
+            ipa_lastlogin = datetime.datetime.strptime(ipa_lastlogin, '%Y%m%d%H%M%SZ')
+        except:
+            ipa_lastlogin = datetime.datetime(1976, 7, 23)
+
+        if lastlogin:
+            if ipa_lastlogin > lastlogin:
+                lastlogin = ipa_lastlogin
+        else:
+            lastlogin = ipa_lastlogin
+    
+    if lastlogin == datetime.datetime(1976, 7, 23):
+        return("N/A")
+    else:
+        return "{:%Y-%m-%d %H:%M:%S}".format(lastlogin)
+
+
+
+
+def obj_values(attributes, target, service):
+    '''
+    From an array of given attributes and a object returned from a <object>_find call, the
+    function returns a list of values from each attribute.
+    
+    This is required for printing a table or any other output, since the values
+    returned are not formatted in the same way, some might be missing or
+    returned as list.
+    '''
+    tab = []
+    
+    lastpwdchange = ""
+    lastsuccessfulauth = ""
+    
+    try:
+        if service == "otp":
+            lastpwdchange = datetime.datetime.strptime(target['ipatokennotafter'][0]['__datetime__'], '%Y%m%d%H%M%SZ')
+        else:
+            lastpwdchange = datetime.datetime.strptime(target['krblastpwdchange'][0]['__datetime__'], '%Y%m%d%H%M%SZ')
+            
+        lastpwdchange = "{:%Y-%m-%d %H:%M:%S}".format(lastpwdchange)
+    except:
+        lastpwdchange = "N/A"
+    
+    if service == "user":
+        try:
+            lastsuccessfulauth = datetime.datetime.strptime(target['krblastsuccessfulauth'][0]['__datetime__'], '%Y%m%d%H%M%SZ')
+            lastsuccessfulauth = "{:%Y-%m-%d %H:%M:%S}".format(lastsuccessfulauth)
+        except:
+            lastsuccessfulauth = "N/A"
+    
+    for attr in attributes:
+        if service == "user":
+            if attr == "usr_lastpasschange":
+                # print(attr + ": " + "{:%Y-%m-%d %H:%M:%S}".format(usr_lastpasschange))
+                tab.append(usr_lastpasschange)
+            elif attr == "lastauth":
+                tab.append(get_lastsuccessfulauth(target['uid'][0]))
+            elif attr == "lastfailedauth":
+                tab.append(get_lastfailedauth(target['uid'][0]))
+            else:
+                try:
+                    if isinstance(target[attr], list):
+                        tab.append(','.join(target[attr]))
+                    else:
+                        tab.append(str(target[attr]))
+                    
+                except:
+                    # print(attr + " attribute not set")
+                    tab.append("")
+
+
+        elif service == "host":
+            if attr == "krblastpwdchange":
+                tab.append(krblastpwdchange)
+            elif attr == "krblastsuccessfulauth":
+                tab.append(krblastsuccessfulauth)
+            else:
+                try:
+                    if isinstance(target[attr], list):
+                        tab.append(','.join(target[attr]))
+                    else:
+                        tab.append(str(target[attr]))
+                    
+                except:
+                    tab.append("")
+
+        elif service == "otp":
+            if attr == "ipatokennotafter":
+                tab.append(ipatokennotafter)
+            else:
+                try:
+                    if isinstance(target[attr], list):
+                        tab.append(','.join(target[attr]))
+                    else:
+                        tab.append(str(target[attr]))
+                    
+                except:
+                    tab.append("")
+
+                
+    return tab
+
+
+
+def obj_delete(target, service):
+
+    try:
+        if service == "user":
+            obj_del = client.user_del(target)
+        elif service == "host":
+            obj_del = client.host_del(a_fqdn=target + at_domain, o_updatedns=True)
+        elif service == "otp":
+            obj_del = client.otptoken_del(a_ipatokenuniqueid=target)
+
+    except:
+        print("Object not found, please make sure it exists using 'ipa-cli <service> find'")
+    else:
+        print(obj_del['summary'])
+
+
+def usr_disable(uid):
+
+    try:
+        usr_dis = client.user_disable(uid)
+    except:
+        print("User not found, please make sure the uid is correct using 'ipa-cli user find'")
+    else:
+        print(usr_dis['summary'])
+
+
+
+
+if __name__ == '__main__': main()
