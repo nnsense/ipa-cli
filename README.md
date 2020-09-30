@@ -1,6 +1,6 @@
 # ipa-cli
 
-This script is to help with some common IPA management tasks, such as user, OTP and DNS management.
+This script is to help with some common IPA management tasks, such as user, OTP and DNS management. It relies on the python freeipa module, see the [project docs](https://python-freeipa.readthedocs.io/en/latest/) for more info.
 It is strongly advised to create a kerberos ticket with `kinit username`, `-u` and `-p` are provided to pass administrative username and password but the sole use of this is to automate the script, with plain username/password (no OTP).
 
 This script requires 3 positional arguments: **service task and target**.
@@ -17,11 +17,11 @@ By default, last login attribute is disabled on IPA, "for performance reasons". 
 
 Search a user called "dbowie", list all its attributes:
 ```
-> ipa-cli user find "dbowie"
+ipa-cli user find "dbowie"
 ```
 Search a user called "dbowie" and show only some attribute. `--filter` (`-f`) accepts any IPA attributes, plus the custom attributes `lastlogin` and `lastfailedauth`.
 ```
-> ipa-cli user find "bowie" -f sn lastlogin lastfailedauth
+ipa-cli user find "bowie" -f sn lastlogin lastfailedauth
 ```
 Search for a user's assigned OTP. Like with user, use `--filter` (`-f`) as in the previous example to show only attributes:
 ```
