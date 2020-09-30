@@ -460,23 +460,24 @@ def get_lastfailedauth(uid):
     '''
 
     usr_status =  client.user_status(uid)
+    lastfail = ""
     
-    ipa1 = usr_status['result'][0]
-    ipa2 = usr_status['result'][1]
+    for ipa_server in usr_status['result']:
+        try:
+            ipa1_lastfail = ipa_server['krblastfailedauth'][0]['__datetime__']
+            ipa1_lastfail = datetime.datetime.strptime(ipa1_lastfail, '%Y%m%d%H%M%SZ')
+        except:
+            ipa1_lastfail = datetime.datetime(1976, 7, 23)
 
-    try:
-        ipa2_lastfail = ipa2['krblastfailedauth'][0]['__datetime__']
-        ipa2_lastfail = datetime.datetime.strptime(ipa2_lastfail, '%Y%m%d%H%M%SZ')
-        ipa1_lastfail = ipa1['krblastfailedauth'][0]['__datetime__']
-        ipa1_lastfail = datetime.datetime.strptime(ipa1_lastfail, '%Y%m%d%H%M%SZ')
-    except:
-        return "N/A"
-    else:
-        if ipa1_lastfail > ipa2_lastfail:
-            lastfail = ipa1_lastfail
+        if lastfail:
+            if ipa1_lastfail > lastfail:
+                lastfail = ipa1_lastfail
         else:
-            lastfail = ipa2_lastfail
-        
+            lastfail = ipa1_lastfail
+    
+    if lastfail == datetime.datetime(1976, 7, 23):
+        return("N/A")
+    else:
         return "{:%Y-%m-%d %H:%M:%S}".format(lastfail)
 
 
