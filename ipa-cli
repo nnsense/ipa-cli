@@ -267,7 +267,13 @@ ipa-cli user delete "dbowie"
                         pt = PrettyTable(args.filter)
                         attributes_tab.append(obj_values(args.filter, dns_record, "dns"))
                     else:
-                        h_name = dict([tuple(x.split('=')) for x in dns_record['dn'].split(",")])['idnsName']
+                        # print(dns_record)
+                        try:
+                            h_name = dict([tuple(x.split('=')) for x in dns_record['dn'].split(",")])['idnsName']
+                        except:
+                            # Hopefully a manually created record
+                            h_name = dns_record['idnsname'][0]['__dns_name__']
+
                         dns_dict = dict(zip(dns_record.keys(), obj_values(dns_record.keys(), dns_record, "dns")))
                         dns_dict['fqdn'] = h_name + "." + dns_domain
                         dnsrecords_dicts.append(dns_dict)
