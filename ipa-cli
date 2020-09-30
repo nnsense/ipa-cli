@@ -39,6 +39,7 @@ at_domain = config['at_domain']
 dns_domain = config['dns_domain']
 ipa_server = config['ipa_server']
 def_pass = config['def_pass']
+otptoken_expiration = int(config['otptoken_expiration'])
 
 parser = argparse.ArgumentParser(description='Manages _some_ IPA services. Running kinit is advised before using this tool, otherwise you can set -u and -p but your user auth needs to be password only. This is usually convenient to automate the script')
 parser.add_argument("service", help="IPA service to interact with, currently: user, dns", nargs='?')
@@ -136,6 +137,7 @@ ipa-cli user delete "dbowie"
         '''
         create: the argument is positional, as in "ipa-cli user create "dbowie" -n "David" -s "Bowie" -t "Artist"
         user: It will create a user based on command line arguments
+        otp: Creates a new OTP for a user. Any previous otp will be deleted.
         dns: TODO - It will create a DNS entry based on command line arguments and defaults.
         host: Does not apply to host.
         '''
@@ -146,7 +148,7 @@ ipa-cli user delete "dbowie"
         elif args.service == "user":
 
             if not args.target or not args.name or not args.sn:
-                print("ipa-cli user create requires a username, the user's given name and surname and, optionally, a password. ie: ipa-cli user create 'dbowie' -n 'David' -s 'Bowie'.\See --usage for more info and examples")
+                print("ipa-cli user create requires a username (uid), the user's given name and surname and, optionally, a password. ie: ipa-cli user create 'dbowie' -n 'David' -s 'Bowie'.\See --usage for more info and examples")
                 exit()
             uid = args.target
             name= args.name
@@ -180,13 +182,13 @@ ipa-cli user delete "dbowie"
                 print("New user successfully created")
             
             # Create and add the OTP
-            otp_expire = datetime.datetime.now() + datetime.timedelta(30)
+            otp_expire = datetime.datetime.now() + datetime.timedelta(otptoken_expiration)
             otp_expire = "{:%Y-%m-%dZ}".format(otp_expire)
             otp_date = "{:%Y-%m-%d %H:%M:%S}".format(datetime.datetime.now())
 
             otp = client.otptoken_add(o_ipatokenowner=uid, o_ipatokennotafter=otp_expire, o_description="Created by " + client.whoami()['arguments'][0] + " at " + otp_date)
             
-            print('OTP:')
+            print('NEW OTP URI:')
             print(otp['result']['uri'])
 
             # Add the new user to the required groups
@@ -194,6 +196,26 @@ ipa-cli user delete "dbowie"
                 for grp in args.groups:
                     client.group_add_member(a_cn=grp, o_user=uid)
 
+        elif args.service == "otp":
+
+            if not args.target:
+                print("ipa-cli otp create requires a username (uid). ie: ipa-cli otp create 'dbowie'\See --usage for more info and examples")
+                exit()
+                
+            # Delete any other user's OTP
+            otp_found = client.otptoken_find(a_criteria = (args.target).replace("*", ""))
+            for otp in otp_found['result']:
+                obj_delete(otp['ipatokenuniqueid'], 'otp')
+
+            # Create and add the OTP
+            otp_expire = datetime.datetime.now() + datetime.timedelta(otptoken_expiration)
+            otp_expire = "{:%Y-%m-%dZ}".format(otp_expire)
+            otp_date = "{:%Y-%m-%d %H:%M:%S}".format(datetime.datetime.now())
+
+            otp = client.otptoken_add(o_ipatokenowner=args.target, o_ipatokennotafter=otp_expire, o_description="Created by " + client.whoami()['arguments'][0] + " at " + otp_date)
+            
+            print('NEW OTP URI:')
+            print(otp['result']['uri'])
 
         
     elif args.task == "delete":
@@ -311,7 +333,7 @@ ipa-cli user delete "dbowie"
 
 
             exit()
-        
+
         elif args.service == "otp":
             otp_found = client.otptoken_find(a_criteria = (args.target).replace("*", ""))
             found_nr = otp_found['count']
