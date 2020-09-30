@@ -23,30 +23,32 @@ Search a user called "dbowie" and show only some attribute. `--filter` (`-f`) ac
 ```
 > ipa-cli user find "bowie" -f sn lastlogin lastfailedauth
 ```
-
 Search for a user's assigned OTP. Like with user, use `--filter` (`-f`) as in the previous example to show only attributes:
 ```
 ipa-cli otp find "dbowie"
 ```
+Search for a dns record: search can be by hostname or IP
+```
+ipa-cli dns find "172.31."
+ipa-cli dns find "172.31." -f dn
+```
 
-#### --cleanup (switch available using --find)
+#### --cleanup (switch available using --find, NOT WORKING with --filter)
 
 Clean up objects found with --find using the following rules:
-user - Search and DISABLE accounts of which the last successful auth is older than 90 days (TO DO).
-host - Search and DELETE hosts of which last successful password change is older than 90 days (TO DO).
-dns - Search and DELETE unmatched DNS entries not present as hosts on IPA. This should be run after the host clean-up
-otp - Search and DELETE any OTP not matching any user.
+user - Search and DELETE accounts of which the last successful auth. Any OTP linked to the user is also deleted. Use --disable to disable instead of deleting the user
+host - Search and DELETE hosts.
+dns - Search and DELETE DNS entries. This is using the `--del-all` switch, which deletes both direct and reverse entries matching the search.
+otp - Search and DELETE OTPs
 
 Target can be "\*" for a cpmplete cleanup, or a specific object group, ie to delete all users create in 2019:
 ```
-> ipa-cli user find "2019" --cleanup
+ipa-cli user find "bowie" --cleanup
+ipa-cli user find "bowie" --cleanup --disable
+ipa-cli user find "172.31" --cleanup
 ```
 
 Being based on "find", find's output can be used first to check what cleanup will delete/disable.
-By default, --cleanup *deletes* the object, with users you may want to disable first, to do that use --disable:
-```
-> ipa-cli user find "2019" --cleanup --disable
-```
 
 
 **CREATE**
