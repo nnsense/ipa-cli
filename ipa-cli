@@ -8,6 +8,7 @@
 
 from os import path
 from pathlib import Path
+import subprocess
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -19,7 +20,7 @@ import configparser
 
 '''
 Configuration
-This script creates a config file with some example fields into user's home called ipa-cli.cfg if not present.
+This script creates a config file with some example fields into user's home called ipa-cli.cfg (if not present).
 TODO: Add more config
 '''
 
@@ -48,7 +49,7 @@ parser.add_argument("target", help="Any field to search or username/DNS entry to
 
 parser.add_argument("-u", help="IPA admin username - to use this script unattended")
 parser.add_argument("-p", help="IPA admin password - to use this script unattended")
-
+# TODO change cleanup with delete and leave disable alone
 parser.add_argument("--filter","-f", help="Optional with --find: returns on or more selected attributes, use space as separator, ie: --filter dn title. Refer to find's output for the attributes' names, see --usage to disable unused users", nargs='+')
 parser.add_argument("--cleanup", help="Optional with --find: delete or disable the objects returned by find. By default it deletes objects, with users you can set --disable to just disable the user", action="store_true", default=False)
 parser.add_argument("--disable", help="Optional with --cleanup: disable the objects returned by find instead of deleting it. Applies to users only.", action="store_true", default=False)
@@ -187,9 +188,14 @@ Undelete a user
             otp_date = "{:%Y-%m-%d %H:%M:%S}".format(datetime.datetime.now())
 
             otp = client.otptoken_add(o_ipatokenowner=uid, o_ipatokennotafter=otp_expire, o_description="Created by " + client.whoami()['arguments'][0] + " at " + otp_date)
+            otp_uri = otp['result']['uri']
             
-            print('NEW OTP URI:')
-            print(otp['result']['uri'])
+            print('NEW OTP URI:\n' + otp_uri)
+            
+            try:
+                qr_code = subprocess.run( ('qrencode -m2 -t utf8 -o- -d 300 -s 10 ' + otp_uri).split(" ") )
+            except:
+                print("Please install qrencode if you want to display the related QR code")
 
             # Add the new user to the required groups
             if args.groups:
@@ -707,8 +713,6 @@ def usr_disable(uid):
         print("User not found, please make sure the uid is correct using 'ipa-cli user find'")
     else:
         print(usr_dis['summary'])
-
-
 
 
 if __name__ == '__main__': main()
