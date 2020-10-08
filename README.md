@@ -3,6 +3,8 @@
 This script is to help with some common IPA management tasks, such as user, OTP and DNS management. It relies on the python freeipa module, see the [project docs](https://python-freeipa.readthedocs.io/en/latest/) for more info.
 It is strongly advised to create a kerberos ticket with `kinit username`, `-u` and `-p` are provided to pass administrative username and password but the sole use of this is to automate the script, with plain username/password (no OTP).
 
+It creates a configuration file in ~/.ipa-cli.cfg, refer to the included file to get more info.
+
 This script requires 3 positional arguments: **service task and target**.
 `service` is the IPA object to work with, can currently be dns, user, otp and host.
 `task`, is the action to perform on the service, can currently be create, delete, disable, cleanup and find.
