@@ -47,21 +47,24 @@ parser.add_argument("service", help="IPA service to interact with, currently: us
 parser.add_argument("task", help="Action to perform, currently: create, delete, disable, find", nargs='?')
 parser.add_argument("target", help="Any field to search or username/DNS entry to create/delete/..", nargs='?')
 
-parser.add_argument("-u", help="IPA admin username - to use this script unattended")
-parser.add_argument("-p", help="IPA admin password - to use this script unattended")
+parser.add_argument("--file", help="Optional with task 'disable', use this file to disable lists of users")
+
+parser.add_argument("-u", help="IPA admin username - to use this script unattended - OTP not allowed")
+parser.add_argument("-p", help="IPA admin password - to use this script unattended - OTP not allowed")
 # TODO change cleanup with delete and leave disable alone
 parser.add_argument("--filter","-f", help="Optional with --find: returns on or more selected attributes, use space as separator, ie: --filter dn title. Refer to find's output for the attributes' names, see --usage to disable unused users", nargs='+')
-parser.add_argument("--cleanup", help="Optional with --find: delete or disable the objects returned by find. By default it deletes objects, with users you can set --disable to just disable the user", action="store_true", default=False)
-parser.add_argument("--disable", help="Optional with --cleanup: disable the objects returned by find instead of deleting it. Applies to users only.", action="store_true", default=False)
-parser.add_argument("--force", help="Optional with --cleanup: delete or disable (see --disable) the objects returned by find without confirmation", action="store_true", default=False)
+parser.add_argument("--delete", help="Optional with --find: delete the objects returned by find.", action="store_true", default=False)
+parser.add_argument("--enable", help="Optional with --find: enable the users returned by find instead of deleting it. Applies to users only.", action="store_true", default=False)
+parser.add_argument("--disable", help="Optional with --find: disable the users returned by find instead of deleting it. Applies to users only.", action="store_true", default=False)
+parser.add_argument("--force", help="Optional with --delete and --disable: delete or disable the objects returned by --find without confirmation.", action="store_true", default=False)
 
 parser.add_argument("--name", "-n", help="User creation: User's given name")
 parser.add_argument("--sn", "-s", help="User creation: User's surname")
 parser.add_argument("--title", "-t", help="User creation: Set the title for the new user")
 parser.add_argument("--groups", "-g", help="User creation: space spearated list of one or more groups the user will belong to.", nargs='?')
-parser.add_argument("--password", help="User creation: Set a password. Default password if not set: '" + def_pass + "'")
+parser.add_argument("--password", help="User creation: Set a password. Default password unset: '" + def_pass + "'")
 
-parser.add_argument("--usage", help="Dispaly script's help and examples", action="store_true", default=False)
+parser.add_argument("--usage", help="Display script's examples", action="store_true", default=False)
 
 args = parser.parse_args()
 
@@ -79,12 +82,15 @@ def main():
     if args.usage:
         print("""
 This script is to help with some common IPA management tasks, such as user, OTP and DNS management.
-It is strongly advised to create a kerberos ticket with `kinit username`, -u and -p are provided to pass administrative username and password
+It is strongly advised to create a kerberos ticket with `kinit username`,
+-u and -p are provided to pass administrative username and password
 but the sole use of this is to automate the script, with plain username/password (no OTP).
 
 This script requires 3 positional arguments: service task and target.
 service is the IPA object to work with, can currently be dns, user, otp and host.
-task, is the action to perform on the service, can currently be create, delete, disable, cleanup and find.
+task, is the action to perform on the service, can currently be: create, delete, disable, cleanup and find.
+Note: --find can also be set with the argument --delete or --disable to force the execution without confirmation.
+This is different from using the "user disable" or the "user delete" positional arguments.
 target is any attribute to search for, or a specific username to create, delete or disable. For DNS is a record name.
 
 To read all the feature implemented so far: https://github.com/nnsense/ipa-cli
@@ -94,8 +100,8 @@ These are some usage examples
 Search a user called "dbowie", list all its attributes:
 > ipa-cli user find "dbowie"
 
-Search a user called "dbowie" and show only some attribute. --filter (-f) accepts anty IPA aatributes, plus the custom attributes lastlogin and lastfailedauth.
-> ipa-cli user find "bowie" -f uid lastlogin lastfailedauth
+Search a user called "dbowie" and show only some attribute (last successfull login, last failed authentication and the user status (disabled/enabled). --filter (-f) accepts anty IPA aatributes, plus the custom attributes lastlogin and lastfailedauth.
+> ipa-cli user find "bowie" -f uid lastlogin lastfailedauth nsaccountlock
 
 Search for a user's assigned OTP. Like with user, use --filter (-f) as in the previous example to show only attributes:
 > ipa-cli otp find "dbowie"
@@ -103,14 +109,17 @@ Search for a user's assigned OTP. Like with user, use --filter (-f) as in the pr
 Search for a DNS record
 > ipa-cli dns find "prod-servers"
 
-Search users and delete (without confirmation)
-> ipa-cli user find "Support" --cleanup --force
+Search (and DELETE) users without confirmation
+> ipa-cli user find "Support" --delete --force
 
 Search (and DELETE) users last authenticated before (<) 2010-10-10
-> ipa-cli user find "*" -f "<2020-10-10" --cleanup
+> ipa-cli user find "*" -f "<2020-10-10" --delete
 
 Search (and DISABLE) users last authenticated after (>) 2010-10-10
-> ipa-cli user find "Support" -f "<2020-10-10" --cleanup --disable
+> ipa-cli user find "Support" -f "<2020-10-10" --disable
+
+Search (and DISABLE) users last authenticated after (>) 2010-10-10
+> ipa-cli user find "Support" -f "<2020-10-10" --enable
 
 Create a new user and add it to the prod-users group
 > ipa-cli user create 'dbowie' -n 'David' -s 'Bowie' -g 'prod-users'
@@ -137,7 +146,7 @@ Undelete a user
         '''
         create: the argument is positional, as in "ipa-cli user create "dbowie" -n "David" -s "Bowie" -t "Artist"
         user: It will create a user based on command line arguments
-        otp: Creates a new OTP for a user. Any previous otp will be deleted.
+        otp: Creates a new OTP for a user. Any previous otp will be deleted. It will display the QR code if qrencode is installed.
         dns: TODO - It will create a DNS entry based on command line arguments and defaults.
         host: Does not apply to host.
         '''
@@ -180,7 +189,7 @@ Undelete a user
                 print(e)
                 exit()
             else:
-                print("New user successfully created")
+                print("New user successfully created, the user will need to change the password upon first login")
             
             # Create and add the OTP
             otp_expire = datetime.datetime.now() + datetime.timedelta(otptoken_expiration)
@@ -231,26 +240,44 @@ Undelete a user
         It will DELETE an user on IPA or a DNS record (both direct and reverse, if exists)
         Since this is a disruptive action, a confirmation request to proceed is required.
         '''
-    
+        
+        targets = []
+        
+        # Converting the args.target string into list to manage it the same way as args.files data
+        if args.target:
+            targets = [ args.target ]
+        elif args.file:
+            with open(args.file) as f:
+                targets = [line.strip() for line in f]
+                
         if args.service == "dns":
-            print("DNS management not yet implemented")
+            print("DNS management not implemented yet")
+
         else:
             if args.force:
+                # If target is user, delete the linked OTPs too
                 if args.service == "user":
-                    # Delete any other user's OTP
-                    otp_found = client.otptoken_find(a_criteria = (args.target).replace("*", ""))
-                    for otp in otp_found['result']:
-                        obj_delete(otp['ipatokenuniqueid'], 'otp')
+                    for target in targets:
+                        try:
+                            otp_found = client.otptoken_find(o_ipatokenowner = target)
+                            
+                        except Exception as e:
+                            print(str(e))
 
-                obj_delete(args.target, args.service)
+                        for otp in otp_found['result']:
+                            obj_delete(otp['ipatokenuniqueid'], 'otp')
+
+                # Delete the object
+                obj_delete(target, args.service)
 
             else:
-                confirm = input(args.target + " will be deleted forever. Are you sure? Please type yes or no: ")
+                for target in targets:
+                    confirm = input(target + " will be deleted forever. Are you sure? Please type yes or no: ")
 
-                if confirm.lower() == "yes":
-                    obj_delete(args.target, args.service)
-                else:
-                    print("Aborted")
+                    if confirm.lower() == "yes":
+                        obj_delete(target, args.service)
+                    else:
+                        print("Aborted")
 
     elif args.task == "undelete":
     
@@ -282,7 +309,14 @@ Undelete a user
         '''
     
         if args.service == "user":
-            user_disable(args.target)
+            if args.file:
+                with open(args.file) as file:
+                    for line in file:
+                        line = line.strip()
+                        usr_disable(line)
+            else:
+                usr_disable(args.target)
+
         else:
             print("DNS/OTP and hosts cannot be disabled")
 
@@ -294,9 +328,6 @@ Undelete a user
         find: Search a USER by name, or an OTP by id. The argument is positional, as in "ipa-cli user find myuser"
         If cleanup is enabled, the objects will eventually be deleted/disabled
         '''
-        
-        if args.disable:
-            print("--disable set") if args.service == "user" else print("--disable not available with OTP")
         
         if args.service == "dns":
             # Clean up search term
@@ -345,9 +376,15 @@ Undelete a user
                             print(k + ": " + str(v))
                         print()
 
-                    if args.cleanup:
-                        print("Unique DNS Name is required to clean up")
+                    if args.disable:
+                        print("ERROR: A DNS record cannot be disabled")
+                        exit()
                         
+                    elif args.delete:
+                        if args.disable:
+                            print("--disable is unavailable in this context")
+                            exit()
+
                         if not args.force:
                             confirm = input("Proceed with cleanup? Please type yes or no: ")
 
@@ -399,7 +436,14 @@ Undelete a user
                             print(k + ": " + str(v))
                         print()
 
-                    if args.cleanup:
+                    if args.disable:
+                        print("ERROR: An OTP cannot be disabled")
+                        exit()
+                        
+                    elif args.delete:
+                        if args.disable:
+                            print("--disable is unavailable in this context")
+                            exit()
                         if not args.force:
                             confirm = input("Proceed with cleanup? Please type yes or no: ")
 
@@ -415,8 +459,21 @@ Undelete a user
 
 
         elif args.service == "user":
+
+            if args.file:
+                usr_found = {}
+                user_details = []
+                with open(args.file) as file:
+                    for line in file:
+                        line = line.strip()
+                        user_details.append( client.user_find(o_uid = line)['result'][0])
+
+                usr_found['result'] = user_details
+                usr_found['count'] = len(user_details)
+
+            else:
+                usr_found = client.user_find(a_criteria = (args.target).replace("*", ""))
             
-            usr_found = client.user_find(a_criteria = (args.target).replace("*", ""))
             found_nr = usr_found['count']
 
             if found_nr > 0:
@@ -446,6 +503,9 @@ Undelete a user
 
                     if args.filter:
                         
+                        # Create the table header
+                        pt = PrettyTable(args.filter)
+                        
                         # If dt_search is populated, then the users before / after the filter will be skipped
                         if dt_search:
                             if compare == ">" or compare == "<":
@@ -471,14 +531,12 @@ Undelete a user
                         
                         attributes_tab.append(obj_values(args.filter, usr, "user"))
                         
-                        # Add this user to the user dictionary for --cleanup
+                        # Add this user to the user dictionary for --delete
                         usr_dict = {}
                         usr_dict['uid'] = usr['uid'][0]
                         usr_dicts.append(usr_dict)
 
-                        # Create the table header
-                        pt = PrettyTable(args.filter)
-                        
+
                     else:
                         # Adding all attributes from client.user_find
                         usr_dict = dict(zip(usr.keys(), obj_values(usr.keys(), usr, "user")))
@@ -501,25 +559,94 @@ Undelete a user
                             print(k + ": " + str(v))
                         print()
                 
-                # If --cleanup is set, delete users. If --disable, then disable them
-                if args.cleanup:
-                    if args.disable:
-                        for usr_dict in usr_dicts:
-                            usr_disable(usr_dict['uid'])
+                if args.disable:
+                    print("Disabling the returned users, to see the updated status run --find again")
+                    if args.delete:
+                        print("Please set only one task, --delete or --disable")
+                        exit()
+                    for usr_dict in usr_dicts:
+                        usr_disable(usr_dict['uid'])
+                    
+                elif args.enable:
+                    print("Enabling the returned users, to see the updated status run --find again")
+                    for usr_dict in usr_dicts:
+                        usr_enable(usr_dict['uid'])
                         
-                    else:
-                        if not args.force:
-                            confirm = input("Proceed with cleanup? Please type yes or no: ")
+                elif args.delete:
+                    if args.disable:
+                        print("Please set only one task, --delete or --disable")
+                        exit()
+                    if not args.force:
+                        confirm = input("Proceed with deletion? Please type yes or no: ")
 
-                            if confirm.lower() == "yes":
-                                for usr_dict in usr_dicts:
-                                    obj_delete(usr_dict['uid'], args.service)
-
-                            else:
-                                print("Aborted")
-                        else:
+                        if confirm.lower() == "yes":
                             for usr_dict in usr_dicts:
                                 obj_delete(usr_dict['uid'], args.service)
+
+                        else:
+                            print("Aborted")
+                    else:
+                        for usr_dict in usr_dicts:
+                            obj_delete(usr_dict['uid'], args.service)
+                
+                
+
+        elif args.service == "group":
+
+            grp_found = client.group_find(a_criteria = (args.target).replace("*", ""))
+            found_nr = grp_found['count']
+            
+            print(str(found_nr) + " group(s) found")
+
+            if found_nr > 0:
+                attributes_tab = []
+                grp_dicts = []
+                
+                if args.filter:
+                    # A reference to the object is required, so the fqdn is added to the filter
+                    if "fqdn" not in args.filter:
+                        args.filter.insert(0,"fqdn")
+
+                for grp in grp_found['result']:
+                    
+                    if args.filter:
+                        attr_dict = {}
+
+                        for attr in grp:
+                            if attr in args.filter:
+                                attr_dict[attr] = obj_values([attr], grp, "grp")[0]
+                                
+                        grp_dicts.append(attr_dict)
+                            
+                    else:
+                        attr_dict = dict(zip(grp.keys(), obj_values(grp.keys(), grp, "grp")))
+                        grp_dicts.append(attr_dict)
+
+                for grp_dict in grp_dicts:
+                    for k,v in grp_dict.items():
+                        print(k + ": " + str(v))
+                    print()
+
+                if args.disable:
+                    print("ERROR: A group cannot be disabled")
+                    exit()
+                    
+                elif args.delete:
+                    if args.disable:
+                        print("--disable is unavailable in this context")
+                        exit()
+                    if not args.force:
+                        confirm = input("Proceed with deletion? Please type yes or no: ")
+
+                        if confirm.lower() == "yes":
+                            for grp_dict in grp_dicts:
+                                obj_delete(grp_dict['fqdn'], args.service)
+                        else:
+                            print("Aborted")
+                    else:
+                        for usr_dict in grp_dicts:
+                            obj_delete(usr_dict['fqdn'], args.service)
+                
 
         elif args.service == "host":
 
@@ -557,10 +684,13 @@ Undelete a user
                         print(k + ": " + str(v))
                     print()
 
-                if args.cleanup:
-                    # TODO Check this part
+                if args.disable:
+                    print("ERROR: A hostname could be disabled, but it has not be implemented since it is not a common task")
+                    exit()
+                    
+                elif args.delete:
                     if not args.force:
-                        confirm = input("Proceed with cleanup? Please type yes or no: ")
+                        confirm = input("Proceed with deletion? Please type yes or no: ")
 
                         if confirm.lower() == "yes":
                             for host_dict in host_dicts:
@@ -700,7 +830,7 @@ def obj_delete(target, service):
             obj_del = client.dnsrecord_del(a_dnszoneidnsname=dns_domain, a_idnsname=target, o_del_all=True)
 
     except Exception as e:
-        print(str(e) + ", please check the object using 'ipa-cli <service> find'")
+        print(target + " - ERROR: " + str(e))
     else:
         print(obj_del['summary'])
 
@@ -709,8 +839,17 @@ def usr_disable(uid):
 
     try:
         usr_dis = client.user_disable(uid)
-    except:
-        print("User not found, please make sure the uid is correct using 'ipa-cli user find'")
+    except Exception as e:
+        print(uid + " - ERROR: " + str(e))
+    else:
+        print(usr_dis['summary'])
+
+def usr_enable(uid):
+
+    try:
+        usr_dis = client.user_enable(uid)
+    except Exception as e:
+        print(uid + " - ERROR: " + str(e))
     else:
         print(usr_dis['summary'])
 
